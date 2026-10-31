@@ -1,0 +1,142 @@
+IP2 EN AWS UBUNTU 24.04 LTS CON NGROK
+
+Resultado: un proceso Node sirve dist/server.cjs y dist/frontend en
+127.0.0.1:3000. Otro servicio publica HTTPS mediante un dominio fijo de ngrok.
+No se necesitan Nginx, certificados locales ni puertos públicos 3000/4040.
+El script configura servicios y los inicia; no instala Node, ngrok ni npm.
+
+1. Preparar la instancia y el dominio
+
+Utilice Ubuntu 24.04 LTS con systemd y una cuenta normal con sudo, por ejemplo
+ubuntu. En el Security Group permita TCP 22 solo desde su IP pública /32
+(y /128 si utiliza IPv6). No abra 3000, 4040, 80 ni 443 de entrada.
+Permita salida HTTPS, DNS hacia el resolvedor y acceso a los repositorios de
+paquetes; una subred privada necesita NAT u otra salida a Internet.
+
+En https://dashboard.ngrok.com/domains obtenga el dominio asignado/reservado
+que su cuenta permita y un authtoken para esta instancia. Use siempre ese mismo
+dominio, sin rutas. Los dominios personalizados requieren su configuración DNS
+y pueden depender del plan. No ejecute ngrok config add-authtoken con el token
+en la línea de comandos: el script lo solicita sin mostrarlo.
+
+Instale Node 24.18.0 y npm para Linux desde una fuente oficial de confianza
+(https://nodejs.org/en/download). Deben estar disponibles para systemd, no solo
+mediante nvm en su usuario. El binario real de node debe estar en /usr/bin o
+/usr/local/bin, ser propiedad de root y no permitir escritura de grupo/otros.
+La versión fijada actualmente en package.json es exactamente 24.18.0.
+
+Para instalar ngrok mediante su repositorio oficial, desde Bash:
+  set -o pipefail
+  curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+  echo 'deb https://ngrok-agent.s3.amazonaws.com buster main' | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
+  sudo apt-get update
+  sudo apt-get install -y ngrok
+  node --version
+  npm --version
+  ngrok version
+El nombre buster corresponde al repositorio publicado por ngrok, no al SO.
+Utilice un agente actual compatible con configuración v3 y --url.
+
+2. Preparar el proyecto como usuario normal, NUNCA con sudo npm
+
+Para un directorio nuevo (sustituya ubuntu si usa otra cuenta):
+  sudo install -d -o ubuntu -g ubuntu -m 755 /opt/ip2
+Transfiera el código de este proyecto a /opt/ip2 sin copiar node_modules,
+dist de Windows, secretos ni bases SQLite. No sobrescriba un despliegue previo.
+  cd /opt/ip2
+  npm ci
+  npm run build
+  test -e .env || (umask 077; cp .env.example .env)
+  chmod 600 .env
+  npm run auth:setup
+
+El asistente solicita y confirma la contraseña sin mostrarla y escribe
+ADMIN_PASSWORD_HASH; no configura SESSION_SECRET. Edite .env con nano .env
+en esta primera instalación. Mantenga una única asignación por variable:
+  HOST=127.0.0.1
+  PORT=3000
+  NODE_ENV=production
+  APP_BASE_URL=https://SU-DOMINIO-REAL
+  DATABASE_PATH=/var/lib/ip2/ip2.db
+Complete también SESSION_SECRET con al menos 32 caracteres aleatorios,
+RETELL_API_KEY, RETELL_WEBHOOK_KEY, RETELL_FROM_NUMBER y RETELL_AGENT_ID.
+Obtenga SESSION_SECRET de un generador criptográfico o gestor de contraseñas;
+no publique valores, no los incluya en comandos y no suba .env al repositorio.
+RETELL_WEBHOOK_KEY es la clave marcada para firmar webhooks en Retell, no una
+cadena inventada. Mantenga los límites de importación del ejemplo salvo necesidad.
+
+3. Crear los servicios
+
+Revise scripts/setup-aws-ngrok.sh antes de darle privilegios. Desde /opt/ip2:
+  sudo bash scripts/setup-aws-ngrok.sh SU-DOMINIO-REAL
+Introduzca el authtoken únicamente en la solicitud oculta. El script comprueba
+requisitos, crea usuarios distintos sin acceso interactivo (ip2 e ip2-ngrok),
+copia .env una sola vez a /etc/ip2/app.env (root:ip2, 640), guarda el token en
+/etc/ip2-ngrok/ngrok.yml (root:ip2-ngrok, 640) y conserva los archivos existentes.
+La base persistente está en /var/lib/ip2/ip2.db. No se copia ni se migra una base.
+Los servicios ip2.service e ip2-ngrok.service se habilitan al arrancar y se
+reinician ante fallos. Durante la instalación, el túnel solo se inicia después
+del chequeo HTTP local; si falla, queda detenido y deshabilitado.
+El script no comprueba públicamente el dominio ni garantiza que ngrok lo acepte.
+
+Abra manualmente https://SU-DOMINIO-REAL/api/health y compruebe status=ok;
+después abra /auth y verifique inicio y cierre de sesión. APP_BASE_URL HTTPS
+activa cookies Secure y confianza limitada al proxy de loopback. No utilice
+HTTP para entrar ni exponga directamente el puerto Node. El servicio ejecuta
+node dist/server.cjs; npm start conserva el arranque desde fuentes con tsx.
+No ejecute ninguno de ellos en paralelo al servicio.
+
+4. Configurar Retell manualmente
+
+En la configuración de webhooks del agente/cuenta correspondiente establezca:
+  https://SU-DOMINIO-REAL/webhooks/retell
+El backend recibe POST y verifica X-Retell-Signature con el cuerpo original.
+Configure los eventos call_started, call_ended y call_analyzed según lo permita
+su cuenta. Verifique agente, número y permisos antes de autorizar llamadas.
+La instalación no inicia llamadas de prueba. Al arrancar, el backend sí ejecuta
+su recuperación habitual y consulta Retell si existen intentos pendientes.
+
+5. Operación y cambios
+
+  sudo systemctl status ip2 ip2-ngrok --no-pager
+  sudo journalctl -u ip2 -u ip2-ngrok -n 100 --no-pager
+  sudo journalctl -u ip2 -u ip2-ngrok -f
+  curl --noproxy '*' -fsS http://127.0.0.1:3000/api/health
+  sudo systemctl restart ip2 ip2-ngrok
+  sudo systemctl disable --now ip2-ngrok ip2
+
+Para cambiar secretos use sudo nano /etc/ip2/app.env o
+sudo nano /etc/ip2-ngrok/ngrok.yml; no los imprima ni use argumentos CLI.
+El .env del checkout ya NO es la configuración del servicio y no se vuelve a
+copiar al repetir el script. Para cambiar la contraseña, ejecute npm run
+auth:setup como usuario normal y transfiera solamente el hash nuevo con un
+editor seguro a app.env; no reemplace los demás secretos. Reinicie después.
+Para cambiar de dominio actualice APP_BASE_URL en app.env y vuelva a ejecutar
+el script con ese dominio; actualice también la URL en Retell.
+
+Para actualizar: detenga ambos servicios, haga una copia de seguridad consistente
+de /var/lib/ip2 completo con el backend detenido, actualice código, ejecute
+npm ci y npm run build como usuario normal y repita el script. No ejecute
+múltiples instancias/PM2 cluster: este proyecto utiliza una única cola y SQLite.
+Las bases antiguas incompatibles con el esquema v2 se rechazan SIN migración
+ni borrado. Conserve la original y planifique una migración manual; no elimine
+la base para solucionar un error de arranque. Una base nueva implica datos vacíos.
+
+Límites de seguridad y verificación
+
+La inspección local y su almacenamiento se desactivan; no hay interfaz 4040.
+Esto no desactiva automáticamente la observabilidad/retención en la nube de ngrok:
+revise su configuración y la de Retell antes de transmitir datos personales.
+CORS se limita al origen configurado en HTTPS, pero NO sustituye autenticación
+ni protección CSRF. No se añade limitación de intentos de acceso, MFA ni una
+auditoría completa de seguridad; evalúe controles perimetrales antes de producción.
+No aplique una autenticación global en ngrok que bloquee los webhooks de Retell.
+La cuenta de despliegue puede cambiar el código que ejecuta ip2: debe ser confiable.
+Mantenga Ubuntu, Node y ngrok actualizados y coordine cambios del engine fijado.
+Se preparó desde Windows: no se ha ejecutado este despliegue en Ubuntu/AWS,
+no se abrió un túnel real y no se validaron credenciales ni llamadas reales.
+
+Referencias oficiales:
+https://ngrok.com/docs/agent/config/v3
+https://ngrok.com/docs/agent/cli
+https://docs.retellai.com/features/secure-webhook

@@ -1,0 +1,69 @@
+{
+  "name": "sequential-retell-dashboard",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": "24.18.0"
+  },
+  "files": [
+    "src/",
+    "scripts/auth-setup.ts",
+    "tsconfig.json",
+    "tsconfig.frontend.json",
+    "vite.config.ts",
+    "dist/frontend/index.html",
+    "dist/frontend/assets/*.js",
+    "dist/frontend/assets/*.css",
+    "import-templates/contacts-template.csv",
+    ".env.example"
+  ],
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "package": "npm run build:frontend && npm pack",
+    "dev": "tsx scripts/dev.ts",
+    "dev:test": "tsx scripts/dev.ts --test",
+    "dev:browser-test": "tsx scripts/browser-test.ts",
+    "test:db:reset": "tsx scripts/test-environment.ts reset",
+    "dev:local": "tsx src/index.ts --local",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.frontend.json --noEmit",
+    "test": "vitest run",
+    "auth:setup": "tsx scripts/auth-setup.ts",
+    "check:retell": "tsx scripts/check-retell.ts",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "esbuild src/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:node:sqlite --external:node:sea --external:node:crypto --external:node:fs --external:node:path --external:node:os --external:node:https --external:node:http --external:node:stream --external:node:buffer --external:node:url --external:node:process --external:node:events --external:node:timers --external:node:util",
+    "build:frontend": "vite build --config vite.config.ts",
+    "build:sea": "tsx scripts/build-sea.ts",
+    "smoke": "npm run build:sea && dist/sequential-retell-dashboard.exe --smoke"
+  },
+  "dependencies": {
+    "cookie-session": "^2.1.0",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "libphonenumber-js": "^1.12.16",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.7.0",
+    "retell-sdk": "^4.32.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/cookie-session": "^2.0.49",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/supertest": "^6.0.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "esbuild": "^0.25.9",
+    "execa": "^9.5.2",
+    "postject": "^1.0.0-alpha.6",
+    "supertest": "^7.1.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}
